@@ -28,17 +28,17 @@ contract TokenSale is Ownable {
   uint256 public finishTime;
 
   modifier isStarted() {
-    require(startTime != 0, "sale is not started");
+    require(startTime != 0, "Sale:: Not started");
     _;
   }
 
   modifier notStarted() {
-    require(startTime == 0, "sale is started");
+    require(startTime == 0, "Sale:: Started");
     _;
   }
 
   modifier claimAllowed() {
-    require(finishTime != 0, "sale is not finished");
+    require(finishTime != 0, "Sale:: Not finished");
     _;
   }
 
