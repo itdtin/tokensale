@@ -1,31 +1,39 @@
+// SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.11;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract TokenSale is Ownable {
 
-  uint256 public constant MIN_RESERVE_SIZE = 0.5 * 1e18; // 0.5 ETH
-  uint256 public constant MAX_RESERVE_SIZE = 2 * 1e18; // 2 ETH
-  uint256 public constant TOKENS_PER_ETH = 1.42857 * 1e18;
-  uint256 public constant VESTING_AMOUNT = 25; // 25 %
-  uint256 public constant VESTING_AMOUNT_TOTAL = 100; // 100 %
-  uint256 public constant VESTING_PERIOD = 30 days;
-  uint256 public constant RATE_PRECISION = 1e18;
-
-  event Reserve(address indexed user, uint256 busd, uint256 totalReserve);
+  event Reserve(address indexed user, uint256 native, uint256 totalReserve);
   event TokensClaimed(address indexed user, uint256 amount);
+  event Lock(uint amount, address user);
 
+  mapping(address => uint256) public reserves;
   mapping(address => uint256) public claimed;
   mapping(address => uint256) public claimTime;
-  mapping(address => uint256) public reserves;
 
-  uint256 public totalReserve; // ETH
-  IERC20 public token;
-  uint256 public HARD_CAP; // ETH
+  uint256 private constant RATE_PRECISION = 1e18;
+  uint256 public HARD_CAP;
+  uint256 public MIN_RESERVE_SIZE;
+  uint256 public MAX_RESERVE_SIZE; // Native
+  uint256 public immutable TOKENS_PER_NATIVE;
+
+  uint256 public VESTING_PERIOD_COUNTER;
+  uint256 public VESTING_PERIOD;
+  uint256 public LOCK_PERIOD;
+
+  uint256 public totalReserve;
+  IERC20 private token;
   uint256 public startTime;
   uint256 public finishTime;
+
+
+  modifier isAddress(address to) {
+    require(to != address(0), "Sale:: Zero Address");
+    _;
+  }
 
   modifier isStarted() {
     require(startTime != 0, "Sale:: Not started");
@@ -42,9 +50,22 @@ contract TokenSale is Ownable {
     _;
   }
 
-  constructor(IERC20 _token, uint256 hardcap) public {
+  constructor(
+    IERC20 _token,
+    uint256 _minReserve,
+    uint256 _maxReserve,
+    uint256 _tokensPerNative,
+    uint256 _vestingPeriod,
+    uint256 _vestingPeriodCounter,
+    uint256 _lockPeriod
+  ) {
     token = _token;
-    HARD_CAP = hardcap;
+    MIN_RESERVE_SIZE = _minReserve;
+    MAX_RESERVE_SIZE = _maxReserve;
+    TOKENS_PER_NATIVE = _tokensPerNative;
+    VESTING_PERIOD_COUNTER = _vestingPeriodCounter;
+    VESTING_PERIOD = _vestingPeriod;
+    LOCK_PERIOD = _lockPeriod;
   }
 
   // allows users to claim their tokens
@@ -54,19 +75,17 @@ contract TokenSale is Ownable {
 
   function startSale() external notStarted onlyOwner {
     startTime = block.timestamp;
+    HARD_CAP = token.balanceOf(address(this)) * RATE_PRECISION / TOKENS_PER_NATIVE;
   }
 
-  function collectFunds(address payable to) external claimAllowed onlyOwner {
-    (bool success, ) = to.call{value: address(this).balance}('');
+  function collectFunds(address to) external claimAllowed onlyOwner isAddress(to) {
+    (bool success, ) = payable(to).call{value: address(this).balance}("");
     require(success, 'Transfer failed.');
   }
 
   receive() external payable {
-    if(startTime == 0) {
-      revert("Sale:: not started");
-    }
+    if(startTime == 0) revert("Sale:: not started");
     if(msg.value != 0) {
-
       uint256 nativeAmount = msg.value;
       // check hardcap
       uint256 newTotalReserves = totalReserve + nativeAmount;
@@ -89,7 +108,7 @@ contract TokenSale is Ownable {
     }
   }
 
-  function tokensToClaim(address _beneficiary) public view returns(uint256) {
+  function tokensToClaim(address _beneficiary) external view returns(uint256) {
     (uint256 tokensAmount, ) = _tokensToClaim(_beneficiary);
     return tokensAmount;
   }
@@ -98,17 +117,17 @@ contract TokenSale is Ownable {
     @dev This function returns tokensAmount available to claim. Calculates it based on several vesting periods if applicable.
   */
   function _tokensToClaim(address _beneficiary) private view returns(uint256 tokensAmount, uint256 lastClaim) {
-    uint256 tokensLeft = reserves[_beneficiary] * TOKENS_PER_ETH / RATE_PRECISION;
-    if (tokensLeft == 0) {
+    uint256 tokensLeft = reserves[_beneficiary] * TOKENS_PER_NATIVE / RATE_PRECISION;
+    if (tokensLeft == 0 || block.timestamp < LOCK_PERIOD + finishTime) {
       return (0, 0);
     }
 
     lastClaim = claimTime[_beneficiary];
-    bool firstClaim = false;
+    bool firstClaim;
 
     if (lastClaim == 0) { // first time claim, set it to a sale finish time
       firstClaim = true;
-      lastClaim = finishTime;
+      unchecked{ lastClaim = finishTime + LOCK_PERIOD; }
     }
 
     if (lastClaim > block.timestamp) {
@@ -117,17 +136,20 @@ contract TokenSale is Ownable {
     }
 
     uint256 tokensClaimed = claimed[_beneficiary];
-    uint256 tokensPerPeriod = (tokensClaimed + tokensLeft) * VESTING_AMOUNT / VESTING_AMOUNT_TOTAL;
-    uint256 periodsPassed = (block.timestamp - lastClaim) / VESTING_PERIOD;
-
+    uint256 tokensPerPeriod = (tokensClaimed + tokensLeft) * VESTING_PERIOD_COUNTER / VESTING_PERIOD;
+    uint256 periodsPassed = (block.timestamp - lastClaim) / VESTING_PERIOD_COUNTER;
     // align it to period passed
-    lastClaim = lastClaim + (periodsPassed * VESTING_PERIOD);
+    lastClaim = lastClaim + periodsPassed * VESTING_PERIOD_COUNTER;
 
     if (firstClaim)  { // first time claim, add extra period
-      periodsPassed += 1;
+      unchecked {
+        periodsPassed += 1;
+      }
     }
-
     tokensAmount = periodsPassed * tokensPerPeriod;
+    if (tokensAmount > tokensLeft){
+      tokensAmount = tokensLeft;
+    }
   }
 
   // claims vested tokens for a given beneficiary
@@ -140,9 +162,9 @@ contract TokenSale is Ownable {
     _processClaim(msg.sender);
   }
 
-  function claimForMany(address[] memory _beneficiaries) external claimAllowed {
+  function claimForMany(address[] calldata _beneficiaries) external claimAllowed {
     uint256 length = _beneficiaries.length;
-    for (uint256 i = 0; i < length; i++) {
+    for (uint256 i; i < length; ++i) {
       _processClaim(_beneficiaries[i]);
     }
   }
@@ -156,7 +178,7 @@ contract TokenSale is Ownable {
     }
     claimTime[_beneficiary] = lastClaim;
     claimed[_beneficiary] = claimed[_beneficiary] + amountToClaim;
-    reserves[_beneficiary] = reserves[_beneficiary] - (amountToClaim * RATE_PRECISION / TOKENS_PER_ETH);
+    reserves[_beneficiary] = reserves[_beneficiary] - amountToClaim * RATE_PRECISION / TOKENS_PER_NATIVE;
 
     _sendTokens(_beneficiary, amountToClaim);
 
@@ -165,6 +187,6 @@ contract TokenSale is Ownable {
 
   // send tokens to beneficiary and remove obligation
   function _sendTokens(address _beneficiary, uint256 _amountToSend) internal {
-    SafeERC20.safeTransfer(IERC20(token), _beneficiary, _amountToSend);
+    token.transfer(_beneficiary, _amountToSend);
   }
 }
