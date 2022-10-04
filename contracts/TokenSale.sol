@@ -95,15 +95,12 @@ contract TokenSale is Ownable {
 
       uint256 currentReserve = reserves[msg.sender];
       uint256 newReserve;
-    unchecked {
-      newReserve = currentReserve + nativeAmount;
-    }
+      unchecked {
+        newReserve = currentReserve + nativeAmount;
+      }
       require(newReserve >= MIN_RESERVE_SIZE && newReserve <= MAX_RESERVE_SIZE, "Sale:: too much or too little");
-
       reserves[msg.sender] = newReserve;
-
       totalReserve = newTotalReserves;
-
       emit Reserve(msg.sender, nativeAmount, newTotalReserves);
     }
   }
