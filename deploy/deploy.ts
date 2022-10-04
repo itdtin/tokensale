@@ -14,7 +14,7 @@ export default async function (hre: HardhatRuntimeEnvironment) {
     const tokenAdddress = "" //todo token address,
 
     // Todo Sale params
-    const minReserve = ethers.utils.parseEther("0.5")
+    const minReserve = ethers.utils.parseEther("0.0005")
     const maxReserve = ethers.utils.parseEther("2.5")
     const tokensPerNative = ethers.utils.parseEther("1000")
     const vestingPeriodCounter = 86400; // 1 day
@@ -51,4 +51,14 @@ export default async function (hre: HardhatRuntimeEnvironment) {
     // Show the contract info.
     const contractAddress = saleContract.address;
     console.log(`${artifact.contractName} was deployed to ${contractAddress}`);
+
+    console.log("Constructor params ABI: ", saleContract.interface.encodeDeploy([
+        tokenAdddress,
+        minReserve,
+        maxReserve,
+        tokensPerNative,
+        vestingPeriod,
+        vestingPeriodCounter,
+        lockPeriod
+    ]))
 }
