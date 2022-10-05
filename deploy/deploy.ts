@@ -11,7 +11,7 @@ export default async function (hre: HardhatRuntimeEnvironment) {
     console.log(`Running deploy script for the TokenSale contract`);
 
     const walletPrimaryKey = "" //ToDo PK
-    const tokenAdddress = "" //todo token address,
+    const tokenAdddress = "0xf4c9913282E45AF9694Bc247C4952E4a762A2Cb6" //todo token address,
 
     // Todo Sale params
     const minReserve = ethers.utils.parseEther("0.0005")
